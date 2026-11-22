@@ -26,3 +26,29 @@ Normal provider inference, explicitly invoked Web tools, MCP services, and Bash 
 4. Verify explicit Web/MCP/Bash requests still work.
 5. Repeat with an egress policy and log all outbound domains; reject unexpected destinations.
 6. Run the repository's tests and build workflow before merging.
+
+
+## Built-in network audit / hostname deny rules
+
+Edit `$DSH_HOME/network-policy.json` (usually `~/.dsh/network-policy.json`):
+
+```json
+{
+  "blockedDomains": ["deepseek.cn", "deepseek.com"],
+  "auditDenied": true
+}
+```
+
+- The file is optional; the default is to block both suffixes.
+- Changing `blockedDomains` changes the full list (including `[]` to disable domain blocking); restart DSH to apply it.
+- Exact hostname and every DNS subdomain are matched, case-insensitively. A sibling such as `notdeepseek.com` is **not** matched.
+- Invalid JSON or malformed domains fail startup rather than silently permitting unexpected requests.
+- A denial is logged on stderr as `dsh: network audit denied <hostname>` (hostname only; never path, token, headers, request body). Set `auditDenied: false` to suppress logging without disabling blocking.
+
+### Enforcement scope and limitations
+
+This is an **in-process Undici dispatch** safeguard. It covers Node global `fetch`, compatible Undici transports, and the DSH-created dispatchers through the proxy package. It also works when the user has configured no proxy. It does **not** intercept arbitrary `node:http`/`node:https` clients, custom SDK transports, OS DNS/TCP, independent subprocesses (Bash, MCP, child Agents), or workers; the caller may also override the dispatcher. For complete domain denial across the whole process tree, use a separate egress firewall/transparent sandbox. Requests to a blocked official model API will fail, by design.
+
+The policy is an early startup check for CLI profiles rather than a Cordis plugin or late runtime setting. The CLI plugin-management and other non-profile modes are not yet included.
+
+Run `pnpm exec vitest run packages/util/http-proxy/tests/network-policy.spec.ts` and the usual repository CI checks. A live-network audit is still required.
