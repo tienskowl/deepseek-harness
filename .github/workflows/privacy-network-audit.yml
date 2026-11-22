@@ -1,0 +1,34 @@
+name: Privacy fork network audit
+
+on:
+  pull_request:
+    paths:
+      - 'packages/util/http-proxy/**'
+      - 'apps/cli/src/**'
+      - '.github/workflows/privacy-network-audit.yml'
+      - 'PRIVACY-FORK.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  network-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DSH_TELEMETRY_DISABLED: '1'
+      DSH_TELEMETRY_MODE: DISABLED
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.3'
+          cache: pnpm
+      - name: Install immutable dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run network policy regression tests
+        run: pnpm exec vitest run packages/util/http-proxy/tests/network-policy.spec.ts packages/util/http-proxy/tests/node-http-audit.spec.ts packages/util/http-proxy/tests/install.spec.ts
+      - name: Verify TypeScript build
+        run: pnpm run typecheck

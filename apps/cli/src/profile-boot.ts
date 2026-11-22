@@ -31,7 +31,7 @@ import {
 } from '@deepseek-ai/dsh-app-boot'
 import { PROFILE_TEMPLATES } from '@deepseek-ai/dsh-official-bundles'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
-import { installProxyFromEnvironment } from '@deepseek-ai/dsh-http-proxy'
+import { installProxyFromEnvironment, loadNetworkPolicy } from '@deepseek-ai/dsh-http-proxy'
 import { DSH_LAUNCH_ENVIRONMENT_KEY, type LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment'
 import { provideCmdline, type AppReady } from '@deepseek-ai/dsh-cmdline'
 import { createProcessShutdown, type ProcessShutdown } from './process-shutdown.ts'
@@ -286,6 +286,10 @@ export async function runProfile(options: RunProfileOptions): Promise<{ ctx: Con
   const disposeProxy = await installProxyFromEnvironment(
     options.environment,
     (message) => { process.stderr.write(`${NAME}: ${message}\n`) },
+    {
+      networkPolicy: loadNetworkPolicy(resolveDshHome()),
+      reportDenied: (hostname) => { process.stderr.write(`${NAME}: network audit denied ${hostname}\n`) },
+    },
   )
 
   const app: { current?: Context } = {}
