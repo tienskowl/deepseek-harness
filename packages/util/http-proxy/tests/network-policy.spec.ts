@@ -1,6 +1,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import { getGlobalDispatcher } from 'undici'
 import { installProxyFromEnvironment } from '../src/install.ts'
@@ -56,6 +58,36 @@ describe('built-in network policy', () => {
       await dispose()
     }
     expect(getGlobalDispatcher()).toBe(before)
+  })
+
+  it('never forwards blocked HTTP requests to an explicitly configured proxy', async () => {
+    let arrivals = 0
+    const proxy = createServer((_request, response) => {
+      arrivals += 1
+      response.writeHead(200).end('proxy')
+    })
+    await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve))
+    const port = (proxy.address() as AddressInfo).port
+    const lookup = {
+      get: (name: string) => name === 'HTTP_PROXY'
+        ? { value: `http://127.0.0.1:${port}` }
+        : undefined,
+    }
+    const audited: string[] = []
+    const dispose = await installProxyFromEnvironment(lookup, () => {}, {
+      networkPolicy: loadNetworkPolicy(home()),
+      reportDenied: hostname => { audited.push(hostname) },
+    })
+    try {
+      await expect(fetch('http://api.deepseek.com/v1')).rejects.toThrow()
+      expect(audited).toEqual(['api.deepseek.com'])
+      expect(arrivals).toBe(0)
+      expect(await (await fetch('http://other-provider.example/v1')).text()).toBe('proxy')
+      expect(arrivals).toBe(1)
+    } finally {
+      await dispose()
+      await new Promise<void>((resolve, reject) => proxy.close(err => err ? reject(err) : resolve()))
+    }
   })
 
   it('matches the configured domains rather than hard-coded DeepSeek rules', async () => {
