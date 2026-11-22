@@ -9,6 +9,7 @@
 
 import type { Dispatcher, Pool } from 'undici'
 import { isBlockedHostname, type NetworkPolicy } from './network-policy.ts'
+import { installNodeHttpAudit } from './node-http-audit.ts'
 import {
   isSupportedProxyUrl,
   POLICY_ENV_NAMES,
@@ -356,7 +357,18 @@ export async function installProxyFromEnvironment(
 ): Promise<() => Promise<void>> {
   const { policy, diagnostics } = resolveProxyPolicy(env)
   for (const diagnostic of diagnostics) report(diagnostic.message)
-  return await installGlobalProxy(policy, options)
+  const disposeProxy = await installGlobalProxy(policy, options)
+  let disposeHttp: () => void
+  try {
+    disposeHttp = installNodeHttpAudit(options)
+  } catch (error) {
+    await disposeProxy()
+    throw error
+  }
+  return async () => {
+    disposeHttp()
+    await disposeProxy()
+  }
 }
 
 /**
