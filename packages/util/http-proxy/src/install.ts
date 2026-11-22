@@ -8,6 +8,7 @@
  */
 
 import type { Dispatcher, Pool } from 'undici'
+import { isBlockedHostname, type NetworkPolicy } from './network-policy.ts'
 import {
   isSupportedProxyUrl,
   POLICY_ENV_NAMES,
@@ -55,6 +56,10 @@ const DIRECT_ROUTE: ProxyRoute = { proxied: false }
 
 /** Optional dispatcher transport choices shared by global installation and per-request construction. */
 export interface DispatcherOptions {
+  /** Optional built-in request blocker (not inherited by child processes). */
+  readonly networkPolicy?: NetworkPolicy
+  /** Called only for denied outbound requests; never receives URL paths, headers, or credentials. */
+  readonly reportDenied?: (hostname: string) => void
   /**
    * Whether the dispatcher may negotiate HTTP/2. Unset keeps undici's own default; pass `false`
    * for a caller that cannot tolerate an idle h2 session's informational `UND_ERR_INFO` error.
@@ -159,6 +164,29 @@ function writeProxyEnv(values: Readonly<Record<string, string | undefined>>): ()
  * @param options - optional dispatcher overrides; `allowH2` unset keeps undici's own default.
  * @returns the dispatcher to install, owning every per-origin agent its factory created.
  */
+/**
+ * Guard each Undici dispatch BEFORE the transport sees it. This also applies without a proxy.
+ * The report intentionally contains only the destination hostname.
+ */
+async function guardDispatcher(transport: Dispatcher, options: DispatcherOptions): Promise<Dispatcher> {
+  const blocked = options.networkPolicy?.blockedDomains ?? []
+  if (blocked.length === 0) return transport
+  const { Dispatcher: BaseDispatcher } = await import('undici')
+  return new class extends BaseDispatcher {
+    dispatch(request: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean {
+      const hostname = new URL(String(request.origin)).hostname
+      if (isBlockedHostname(hostname, blocked)) {
+        if (options.networkPolicy?.auditDenied !== false) options.reportDenied?.(hostname)
+        handler.onError(new Error(`DSH_NETWORK_DENIED: outbound connection blocked for ${hostname}`))
+        return false
+      }
+      return transport.dispatch(request, handler)
+    }
+    close(): Promise<void> { return transport.close() }
+    destroy(error?: Error): Promise<void> { return transport.destroy(error) }
+  }()
+}
+
 async function createPolicyDispatcher(policy: ProxyPolicy, options: DispatcherOptions = {}): Promise<Dispatcher> {
   const { Agent, Pool, ProxyAgent } = await import('undici')
   // The HTTP/2 choice is the caller's: undici enables it by default, and a caller that cannot
@@ -203,7 +231,7 @@ async function installGlobalProxy(policy: ProxyPolicy, options: DispatcherOption
     // alone would leave the previous agent as the global dispatcher, so a plain `fetch()` would keep
     // tunnelling while `proxyForUrl()` reported a direct connection — and `mode: 'off'` would be a
     // silent no-op. With nothing installed there is nothing to displace.
-    if (previousPolicy === undefined) {
+    if (previousPolicy === undefined && (options.networkPolicy?.blockedDomains.length ?? 0) === 0) {
       active = policy
       return () => {
         active = previousPolicy
@@ -219,7 +247,8 @@ async function installGlobalProxy(policy: ProxyPolicy, options: DispatcherOption
     const undici = await import('undici')
     const previous = undici.getGlobalDispatcher()
     const direct = new undici.Agent(h2Options(options))
-    undici.setGlobalDispatcher(direct)
+    const guarded = await guardDispatcher(direct, options)
+    undici.setGlobalDispatcher(guarded)
     active = policy
     installed = undefined
     return async () => {
@@ -235,9 +264,10 @@ async function installGlobalProxy(policy: ProxyPolicy, options: DispatcherOption
   const previousDispatcher = getGlobalDispatcher()
   const previousInstalled = installed
   const agent = await createPolicyDispatcher(policy, options)
-  setGlobalDispatcher(agent)
+  const guarded = await guardDispatcher(agent, options)
+  setGlobalDispatcher(guarded)
   active = policy
-  installed = agent
+  installed = guarded
   return async () => {
     setGlobalDispatcher(previousDispatcher)
     active = previousPolicy
@@ -352,7 +382,7 @@ export async function createRouteDispatcher(
       return new Agent(h2Options(options))
     })()
     : await createPolicyDispatcher(policy, options)
-  return dispatcher
+  return await guardDispatcher(dispatcher, options)
 }
 
 /**
