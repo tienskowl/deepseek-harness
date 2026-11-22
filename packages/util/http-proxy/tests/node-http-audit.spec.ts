@@ -34,6 +34,7 @@ describe('classic Node HTTP network audit', () => {
     guard()
     expect(() => http.request('http://allowed.test', { hostname: 'API.DEEPSEEK.COM' })).toThrow('DSH_NETWORK_DENIED')
     const permitted = http.request('http://api.deepseek.com', { hostname: '127.0.0.1', port: 9 })
+    permitted.on('error', () => {}) // Destroying an unstarted ClientRequest may emit ECONNRESET asynchronously.
     permitted.destroy()
     // The allowed request was destroyed immediately; it was never sent.
   })
