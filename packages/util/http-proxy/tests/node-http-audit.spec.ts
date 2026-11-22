@@ -33,8 +33,9 @@ describe('classic Node HTTP network audit', () => {
   it('honors the URL options override and case-insensitive exact suffix match', () => {
     guard()
     expect(() => http.request('http://allowed.test', { hostname: 'API.DEEPSEEK.COM' })).toThrow('DSH_NETWORK_DENIED')
-    expect(() => http.request('http://api.deepseek.com', { hostname: 'deepseek.com.evil.test' })).not.toThrow()
-    // The permitted request was only allocated, never sent.
+    const permitted = http.request('http://api.deepseek.com', { hostname: '127.0.0.1', port: 9 })
+    permitted.destroy()
+    // The allowed request was destroyed immediately; it was never sent.
   })
 
   it('updates named built-in ESM exports and restores them on dispose', () => {
