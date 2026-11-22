@@ -174,17 +174,40 @@ async function guardDispatcher(transport: Dispatcher, options: DispatcherOptions
   if (blocked.length === 0) return transport
   const { Dispatcher: BaseDispatcher } = await import('undici')
   return new class extends BaseDispatcher {
-    dispatch(request: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean {
+    override dispatch(request: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean {
       const hostname = new URL(String(request.origin)).hostname
       if (isBlockedHostname(hostname, blocked)) {
         if (options.networkPolicy?.auditDenied !== false) options.reportDenied?.(hostname)
-        handler.onError(new Error(`DSH_NETWORK_DENIED: outbound connection blocked for ${hostname}`))
-        return false
+        const error = new Error(`DSH_NETWORK_DENIED: outbound connection blocked for ${hostname}`)
+        // Undici 8 uses the controller-based callback. Report on a microtask
+        // so consumers can finish registering the request's error handlers.
+        queueMicrotask(() => {
+          handler.onResponseError?.({
+            aborted: true, paused: false, reason: error,
+            abort: () => {}, pause: () => {}, resume: () => {},
+          }, error)
+        })
+        return true
       }
       return transport.dispatch(request, handler)
     }
-    close(): Promise<void> { return transport.close() }
-    destroy(error?: Error): Promise<void> { return transport.destroy(error) }
+
+    override close(callback: () => void): void
+    override close(): Promise<void>
+    override close(callback?: () => void): void | Promise<void> {
+      if (callback !== undefined) { transport.close(callback); return }
+      return transport.close()
+    }
+
+    override destroy(error: Error | null, callback: () => void): void
+    override destroy(callback: () => void): void
+    override destroy(error: Error | null): Promise<void>
+    override destroy(): Promise<void>
+    override destroy(errorOrCallback?: Error | null | (() => void), callback?: () => void): void | Promise<void> {
+      if (typeof errorOrCallback === 'function') { transport.destroy(errorOrCallback); return }
+      if (callback !== undefined) { transport.destroy(errorOrCallback ?? null, callback); return }
+      return errorOrCallback === undefined ? transport.destroy() : transport.destroy(errorOrCallback)
+    }
   }()
 }
 
