@@ -24,3 +24,5 @@ export {
   type DispatcherOptions,
   type ProxyRoute,
 } from './install.ts'
+
+export { loadNetworkPolicy, normalizeBlockedDomains, isBlockedHostname, type NetworkPolicy } from './network-policy.ts'
