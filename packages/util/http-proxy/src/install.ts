@@ -357,12 +357,14 @@ export async function installProxyFromEnvironment(
 ): Promise<() => Promise<void>> {
   const { policy, diagnostics } = resolveProxyPolicy(env)
   for (const diagnostic of diagnostics) report(diagnostic.message)
-  const disposeProxy = await installGlobalProxy(policy, options)
-  let disposeHttp: () => void
+  // Guard classic HTTP synchronously before any awaited transport installation.
+  // If the asynchronous Undici setup fails, restore Node's built-in exports.
+  const disposeHttp = installNodeHttpAudit(options)
+  let disposeProxy: () => Promise<void>
   try {
-    disposeHttp = installNodeHttpAudit(options)
+    disposeProxy = await installGlobalProxy(policy, options)
   } catch (error) {
-    await disposeProxy()
+    disposeHttp()
     throw error
   }
   return async () => {
