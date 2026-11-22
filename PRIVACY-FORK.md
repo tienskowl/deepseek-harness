@@ -47,8 +47,8 @@ Edit `$DSH_HOME/network-policy.json` (usually `~/.dsh/network-policy.json`):
 
 ### Enforcement scope and limitations
 
-This is an **in-process Undici dispatch** safeguard. It covers Node global `fetch`, compatible Undici transports, and the DSH-created dispatchers through the proxy package. It also works when the user has configured no proxy. It does **not** intercept arbitrary `node:http`/`node:https` clients, custom SDK transports, OS DNS/TCP, independent subprocesses (Bash, MCP, child Agents), or workers; the caller may also override the dispatcher. For complete domain denial across the whole process tree, use a separate egress firewall/transparent sandbox. Requests to a blocked official model API will fail, by design.
+This is an **in-process HTTP(S) safeguard**. It covers Node global `fetch`, compatible Undici transports, DSH-created dispatchers, plus `node:http` / `node:https` `request()` and `get()` (including synchronized built-in ESM exports). It also works without a proxy. Denied classic HTTP requests throw `DSH_NETWORK_DENIED` synchronously before a socket is created. It does **not** intercept all custom SDK transports, raw TCP/TLS/HTTP2 connections, OS DNS/TCP, independent subprocesses (Bash, MCP, child Agents), or workers; callers holding a pre-install reference to an original HTTP request function can bypass the wrapper. For complete domain denial across the whole process tree, use a separate egress firewall/transparent sandbox. Requests to a blocked official model API will fail, by design.
 
 The policy is an early startup check for CLI profiles rather than a Cordis plugin or late runtime setting. The CLI plugin-management and other non-profile modes are not yet included.
 
-Run `pnpm exec vitest run packages/util/http-proxy/tests/network-policy.spec.ts` and the usual repository CI checks. A live-network audit is still required.
+Run `pnpm exec vitest run packages/util/http-proxy/tests/network-policy.spec.ts packages/util/http-proxy/tests/node-http-audit.spec.ts` and the usual repository CI checks. A live-network audit is still required.
